@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="kk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Мексика ұлы - Интерактивті Тест</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800&display=swap');
+        
+        body {
+            font-family: 'Montserrat', sans-serif;
+            background: #020617;
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        .mirror { transform: scaleX(-1); }
+
+        /* Камера аймағы - Адаптивті және созылмайды */
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            aspect-ratio: 4 / 3; /* Телефонда және компьютерде тепе-теңдік */
+            background: #000;
+            border: 4px solid #1e293b;
+            border-radius: 2rem;
+            overflow: hidden;
+            box-shadow: 0 0 50px rgba(59, 130, 246, 0.2);
+            margin: 0 auto;
+        }
+
+        /* Бейненің созылуын болдырмау */
+        #output_canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: cover; /* Осы жерде бейне созылмай, табиғи сақталады */
+        }
+
+        @media (min-width: 1024px) {
+            .video-container { aspect-ratio: 16 / 9; }
+        }
+
+        .gesture-indicator {
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            opacity: 0.15;
+            filter: grayscale(1);
+        }
+
+        .gesture-active {
+            opacity: 1;
+            filter: grayscale(0);
+            transform: scale(1.2);
+        }
+
+        .progress-ring { transition: stroke-dashoffset 0.1s linear; }
+    </style>
+</head>
+<body class="p-2 lg:p-6">
+
+    <header class="text-center mb-4">
+        <h1 class="text-2xl lg:text-4xl font-black tracking-tighter uppercase text-blue-500 italic">Мексика ұлы</h1>
+        <p class="text-[10px] lg:text-xs font-bold text-slate-500 uppercase tracking-widest mt-1">Интерактивті қол қимылы тесті</p>
+    </header>
+
+    <div class="flex justify-center mb-6">
+        <div class="video-container">
+            <div id="loadingOverlay" class="absolute inset-0 z-30 bg-slate-900 flex flex-col items-center justify-center text-center p-4">
+                <div class="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                <p class="text-xs font-bold uppercase tracking-widest">Камера қосылуда...</p>
+            </div>
+            
+            <video id="webcam" class="hidden" playsinline></video>
+            <canvas id="output_canvas" class="mirror"></canvas>
+
+            <!-- Gesture UI Overlays -->
+            <div class="absolute inset-0 z-20 flex justify-between items-center px-6 lg:px-16 pointer-events-none">
+                <div id="likeUI" class="gesture-indicator flex flex-col items-center">
+                    <span class="text-6xl lg:text-8xl">👍</span>
+                    <span class="text-[10px] font-black uppercase text-green-400 mt-2">Шындық</span>
+                </div>
+                <div id="dislikeUI" class="gesture-indicator flex flex-col items-center">
+                    <span class="text-6xl lg:text-8xl">👎</span>
+                    <span class="text-[10px] font-black uppercase text-red-400 mt-2">Өтірік</span>
+                </div>
+            </div>
+
+            <!-- Hold Progress Ring -->
+            <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-20">
+                <svg class="w-12 h-12 transform -rotate-90">
+                    <circle cx="24" cy="24" r="20" stroke="rgba(255,255,255,0.2)" stroke-width="4" fill="transparent" />
+                    <circle id="holdCircle" cx="24" cy="24" r="20" stroke="#3b82f6" stroke-width="4" fill="transparent" 
+                            stroke-dasharray="125.6" stroke-dashoffset="125.6" class="progress-ring" />
+                </svg>
+            </div>
+        </div>
+    </div>
+
+    <main class="max-w-4xl mx-auto w-full flex-grow flex flex-col">
+        
+        <!-- Start Screen -->
+        <div id="startScreen" class="bg-slate-900/60 border border-white/10 p-8 rounded-[2.5rem] text-center space-y-6">
+            <div class="text-5xl">🥊</div>
+            <h2 class="text-xl lg:text-2xl font-extrabold uppercase">Дайынсыз ба?</h2>
+            <p class="text-xs lg:text-sm text-slate-400 leading-relaxed max-w-md mx-auto">
+                Джек Лондонның мәтіні бойынша 30 тұжырым. <br>
+                Дұрыс болса — 👍 көрсетіңіз. Қате болса — 👎 көрсетіңіз. <br>
+                <span class="text-blue-400 font-bold">Бейне телефонда созылмайтындай түзетілді.</span>
+            </p>
+            <button id="startBtn" disabled class="w-full max-w-xs py-4 bg-blue-600 rounded-2xl font-black text-lg shadow-xl opacity-50 cursor-not-allowed">
+                ЖҮКТЕЛУДЕ...
+            </button>
+        </div>
+
+        <!-- Quiz Screen -->
+        <div id="quizScreen" class="hidden space-y-6 flex-grow">
+            <div class="flex justify-between items-end px-4">
+                <div class="space-y-1">
+                    <p class="text-[10px] font-black text-blue-400 uppercase">Раунд <span id="qIdx">1</span>/30</p>
+                    <div class="w-32 lg:w-64 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                        <div id="progBar" class="h-full bg-blue-500 transition-all duration-300 w-0"></div>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <p class="text-[10px] font-bold text-slate-500 uppercase">Ұпай</p>
+                    <p class="text-3xl font-black text-blue-500" id="score">0</p>
+                </div>
+            </div>
+
+            <div class="bg-white/5 border border-white/10 p-8 lg:p-12 rounded-[2.5rem] min-h-[180px] flex items-center justify-center relative overflow-hidden">
+                <div class="absolute top-0 left-0 w-1.5 h-full bg-blue-500"></div>
+                <p id="questionText" class="text-lg lg:text-2xl font-bold text-center leading-snug italic px-2">...</p>
+            </div>
+
+            <div id="feedbackText" class="h-12 flex items-center justify-center font-black uppercase text-lg tracking-[0.2em]"></div>
+        </div>
+
+        <!-- Result Screen -->
+        <div id="resultScreen" class="hidden flex flex-col items-center justify-center text-center space-y-6 py-8">
+            <div class="text-8xl">🏆</div>
+            <h2 class="text-3xl font-black uppercase tracking-tighter">Айқас аяқталды!</h2>
+            <div class="bg-blue-600 px-12 py-8 rounded-[3rem] shadow-2xl">
+                <p class="text-[10px] font-bold uppercase opacity-70 mb-1">Сіздің ұпайыңыз</p>
+                <p class="text-6xl font-black"><span id="finalScore">0</span><span class="text-2xl opacity-40">/30</span></p>
+            </div>
+            <button onclick="location.reload()" class="font-black text-blue-400 hover:text-white uppercase tracking-widest text-sm">Қайта бастау</button>
+        </div>
+    </main>
+
+    <script>
+        const questions = [
+            { q: "Ривера рингке шыққанда бүкіл зал оны зор қошеметпен қарсы алды.", a: false },
+            { q: "Дэнни Уорд Ривераны әдейі 5 минут күттіріп, жүйкесіне тимек болды.", a: true },
+            { q: "Дэнни Уорд ақша үшін және жеңіл өмір сүру үшін айқасып келеді.", a: true },
+            { q: "Ривераның ата-анасын генерал Росальо Мартинес өлтірген.", a: true },
+            { q: "Ривераның денесі Дэннимен салыстырғанда әлдеқайда арық және әлжуаз көрінді.", a: true },
+            { q: "Ривераның көз алдына Веракрустегі акулаларға жем болған мәйіттер елестеді.", a: true },
+            { q: "Бапкер Роберт Ривераға «Дэнни сені өлтіреді» деп ескертті.", a: false },
+            { q: "Дэнни Ривераның қолын алғанда туған інісіндей күлімсіреп, жұртты алдады.", a: true },
+            { q: "Дэнни Уорд 18 жаста, ал Ривера 24 жаста еді.", a: false },
+            { q: "Бірінші раундта Ривера Дэнниді сол қолымен ұрып құлатты.", a: true },
+            { q: "Төреші Дэнни құлағанда секундтарды барынша жылдам санады.", a: false },
+            { q: "Ривераның салқынқандылығы бұған дейін жарты доллар үшін таяқ жеп шыңдалуынан туған.", a: true },
+            { q: "Ривера жетінші раундта кермеден асып, репортерлердің ортасына ұшып кетті.", a: true },
+            { q: "Ривера өзін «Мен — Мексиканың революциясымын» деп есептеді.", a: true },
+            { q: "Көрермендер мен төреші айқас бойы Ривераның жағында болды.", a: false },
+            { q: "Майкл Келли Ривераға жеңілу үшін болашақтағы байлықты ұсынды.", a: true },
+            { q: "Ривера Келлидің ұсынысына бірден келісіп, басын изеді.", a: false },
+            { q: "Он жетінші раундта Ривера Дэнниді иектің астынан ұрып, біржола құлатты.", a: true },
+            { q: "Жеңістен кейін бүкіл зал Ривераны құттықтап, оған орындық қойды.", a: false },
+            { q: "Ривера бокстан тапқан ақшасына революция үшін винтовка сатып алғысы келді.", a: true },
+            { q: "Ривераның анасының бейнесі оның санасын семсердей тілгіледі.", a: true },
+            { q: "Дэнни Уордтың суреті спорт журналдарында мүлдем жарияланбаған.", a: false },
+            { q: "Спайдер Хонерти Ривераға «Бәрібір ұтыласың, құла да тұрма» деді.", a: true },
+            { q: "Ривера раунд арасында секунданттарының зор қамқорлығына бөленді.", a: false },
+            { q: "Тоғызыншы раундта Дэнни өз әдісінің (апперкот) құрбандығы болып құлады.", a: true },
+            { q: "Майкл Келли Ривераның жеңетініне көп ақша тіккен болатын.", a: false },
+            { q: "Ривера жеңілсе, революция үшін қажетті қару-жарақсыз қалатын еді.", a: true },
+            { q: "Шығарманың соңында Ривера залға кешіріммен және мейіріммен қарады.", a: false },
+            { q: "Төреші Билл Ривераның жеңісін жариялағанда «Мен не істей аламын?» деп кейи жауап берді.", a: true },
+            { q: "Жеңістен кейін Ривера өз бұрышына жалғыз өзі барды.", a: true }
+        ];
+
+        let currentIdx = 0, score = 0, isProcessing = false, gestureTimer = 0;
+        const GESTURE_HOLD_FRAMES = 25; 
+
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('output_canvas');
+        const ctx = canvas.getContext('2d');
+        const holdCircle = document.getElementById('holdCircle');
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.75,
+            minTrackingConfidence: 0.75
+        });
+
+        hands.onResults(onResults);
+
+        function onResults(results) {
+            // Дисплей өлшемін видеоның табиғи өлшеміне сайлау
+            if (canvas.width !== results.image.width || canvas.height !== results.image.height) {
+                canvas.width = results.image.width;
+                canvas.height = results.image.height;
+            }
+
+            ctx.save();
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const gesture = detectGesture(landmarks);
+                handleGestureLogic(gesture);
+                
+                // Track visual points
+                ctx.fillStyle = "#3b82f6";
+                for (const point of [4, 8, 12, 16, 20]) {
+                    const p = landmarks[point];
+                    ctx.beginPath();
+                    ctx.arc(p.x * canvas.width, p.y * canvas.height, 6, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+            } else {
+                clearGestureUI();
+            }
+            ctx.restore();
+        }
+
+        function detectGesture(landmarks) {
+            const thumbTip = landmarks[4];
+            const thumbIP = landmarks[3];
+            const indexBase = landmarks[5];
+            const pinkyBase = landmarks[17];
+
+            // Thumbs Up: Tip is significantly above IP joint and above index base
+            const isThumbUp = (thumbTip.y < thumbIP.y - 0.02) && (thumbTip.y < indexBase.y - 0.05);
+            // Thumbs Down: Tip is significantly below IP joint and below index base
+            const isThumbDown = (thumbTip.y > thumbIP.y + 0.02) && (thumbTip.y > indexBase.y + 0.05);
+
+            if (isThumbUp) return "LIKE";
+            if (isThumbDown) return "DISLIKE";
+            return null;
+        }
+
+        function handleGestureLogic(gesture) {
+            if (isProcessing || document.getElementById('quizScreen').offsetParent === null) return;
+
+            const likeUI = document.getElementById('likeUI');
+            const dislikeUI = document.getElementById('dislikeUI');
+
+            if (gesture) {
+                gestureTimer++;
+                const progress = (gestureTimer / GESTURE_HOLD_FRAMES) * 125.6;
+                holdCircle.style.strokeDashoffset = 125.6 - progress;
+                
+                if (gesture === "LIKE") {
+                    likeUI.classList.add('gesture-active');
+                    dislikeUI.classList.remove('gesture-active');
+                } else {
+                    dislikeUI.classList.add('gesture-active');
+                    likeUI.classList.remove('gesture-active');
+                }
+            } else {
+                clearGestureUI();
+                return;
+            }
+
+            if (gestureTimer >= GESTURE_HOLD_FRAMES) {
+                const userChoice = (gesture === "LIKE");
+                submitAnswer(userChoice);
+                gestureTimer = 0;
+            }
+        }
+
+        function clearGestureUI() {
+            document.getElementById('likeUI').classList.remove('gesture-active');
+            document.getElementById('dislikeUI').classList.remove('gesture-active');
+            holdCircle.style.strokeDashoffset = 125.6;
+            gestureTimer = 0;
+        }
+
+        function submitAnswer(userChoice) {
+            if (isProcessing) return;
+            isProcessing = true;
+
+            const correctValue = questions[currentIdx].a;
+            const feedback = document.getElementById('feedbackText');
+            
+            if (userChoice === correctValue) {
+                score++;
+                feedback.innerText = "ДҰРЫС! ✅";
+                feedback.style.color = "#4ade80";
+            } else {
+                feedback.innerText = "ҚАТЕ! ❌";
+                feedback.style.color = "#f87171";
+            }
+
+            document.getElementById('score').innerText = score;
+
+            setTimeout(() => {
+                currentIdx++;
+                isProcessing = false;
+                feedback.innerText = "";
+                renderQuestion();
+            }, 1800);
+        }
+
+        function renderQuestion() {
+            if (currentIdx >= questions.length) {
+                document.getElementById('quizScreen').classList.add('hidden');
+                document.getElementById('resultScreen').classList.remove('hidden');
+                document.getElementById('finalScore').innerText = score;
+                return;
+            }
+
+            document.getElementById('questionText').innerText = questions[currentIdx].q;
+            document.getElementById('qIdx').innerText = currentIdx + 1;
+            document.getElementById('progBar').style.width = `${(currentIdx / questions.length) * 100}%`;
+        }
+
+        const camera = new Camera(video, {
+            onFrame: async () => {
+                await hands.send({image: video});
+            },
+            width: 640,
+            height: 480
+        });
+
+        camera.start().then(() => {
+            document.getElementById('loadingOverlay').classList.add('hidden');
+            const btn = document.getElementById('startBtn');
+            btn.disabled = false;
+            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            btn.innerText = "АЙҚАСҚА КІРІСУ";
+        });
+
+        document.getElementById('startBtn').onclick = () => {
+            document.getElementById('startScreen').classList.add('hidden');
+            document.getElementById('quizScreen').classList.remove('hidden');
+            renderQuestion();
+        };
+    </script>
+</body>
+</html>
